@@ -1,0 +1,2 @@
+# sbView
+SwitchBot Config Viewer
