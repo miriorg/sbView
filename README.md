@@ -23,6 +23,15 @@ SwitchBot のデバイス設定・状態情報を取得し、保存するため�
 
 これ以外の仕様についても、確定内容を確認でき次第、追記します。
 
+## 設定テンプレート
+
+[.sbview.conf](.sbview.conf) はローカルの初期実装の設定項目に対応しています。現在、`sbview.ps1` は `main` で未公開です。
+
+1. テンプレートをリポジトリ外にコピーし、UTF-8 のまま保存します。
+2. 変更する設定の行頭から `# ` を外し、`KEY=VALUE` 形式で指定します。コメントのままの項目は設定を上書きしません。
+3. 認証情報は環境変数に入れ、設定ファイルの `TOKEN_ENV` と `SECRET_ENV` に環境変数名を指定します。例として `TOKEN_ENV=SWITCHBOT_TOKEN` と `SECRET_ENV=SWITCHBOT_SECRET` を使えます。設定ファイルの `TOKEN` と `SECRET` はコメントのままにします。
+4. ローカルのスクリプトを `-ConfigPath` でコピーのパスを指定して実行します。`-ShowConfig` を併用すると、API に接続せずに適用された設定を確認できます。
+
 ## 開発・更新方針
 
 確定した仕様と実装の進捗に応じて README を更新します。コミットとリモート反映の運用は [AGENTS.md](AGENTS.md) を参照してください。
@@ -53,6 +62,15 @@ The following decisions have been confirmed from the available project context:
 - Classify errors by type.
 
 Additional agreed specifications will be documented as they are verified.
+
+## Configuration template
+
+[.sbview.conf](.sbview.conf) matches the settings in the initial local implementation. `sbview.ps1` has yet to be published on `main`.
+
+1. Copy the template outside the repository and keep it encoded in UTF-8.
+2. Remove the leading `# ` from each setting you want to change and use `KEY=VALUE` syntax. Commented settings leave the effective configuration intact.
+3. Set credentials in environment variables and specify their names in `TOKEN_ENV` and `SECRET_ENV`. For example, use `TOKEN_ENV=SWITCHBOT_TOKEN` and `SECRET_ENV=SWITCHBOT_SECRET`. Leave `TOKEN` and `SECRET` commented out in the configuration file.
+4. Run the local script with `-ConfigPath` pointing to your copy. Add `-ShowConfig` to inspect the effective settings without contacting the API.
 
 ## Development and updates
 
