@@ -17,6 +17,8 @@
 
 ### ドキュメント
 - 原則として日本語で記述する。
+- 開発中に合意・確定した仕様は、適切なタイミングで README.md に反映し、実装変更に合わせて更新する。
+- README.md では確定仕様と実装済み機能を区別し、未実装の機能を利用可能と誤認させない。
 - README、プルリクエストの説明など、GitHub 上の対外的な文書は日本語の後に同内容の英語を併記する。
 
 ## English
@@ -36,4 +38,6 @@ This repository is used to develop and maintain the SwitchBot configuration retr
 
 ### Documentation
 - Write primarily in Japanese.
+- Keep README.md up to date with agreed specifications as they are finalized and with implementation changes.
+- Distinguish agreed specifications from implemented features; do not present unimplemented features as available.
 - For outward-facing GitHub documents, including README files and pull request descriptions, include an English equivalent after the Japanese text.
