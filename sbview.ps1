@@ -42,14 +42,16 @@ $script:Errors = [System.Collections.Generic.List[string]]::new()
 $script:RawResponses = [ordered]@{}
 $script:Started = [DateTimeOffset]::Now
 $script:HadAuthError = $false
+$script:FailureExitCode = 2
 
 function Write-Diagnostic([string]$Level,[string]$Message) {
+    # Send messages at the configured level to stderr and the optional log file.
     $ranks = @{Debug=0;Info=1;Warning=2;Error=3}
     if ($ranks[$Level] -lt $ranks[$script:Config.LOG_LEVEL]) { return }
     $line = '[{0}] [{1}] {2}' -f ([DateTimeOffset]::Now.ToString('o')), $Level, $Message
     [Console]::Error.WriteLine($line)
     if ($script:Config.LOG_PATH) {
-        $path = [IO.Path]::GetFullPath($script:Config.LOG_PATH)
+        $path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($script:Config.LOG_PATH)
         $dir = [IO.Path]::GetDirectoryName($path)
         if ($dir) { [IO.Directory]::CreateDirectory($dir) | Out-Null }
         [IO.File]::AppendAllText($path, $line + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
@@ -82,12 +84,8 @@ function Assert-Setting([string]$Key,[string]$Value,[string]$Source) {
         'INCLUDE' { if (@($Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -notin 'Devices','Status','Scenes' }).Count) { throw "Invalid INCLUDE at $Source" }; break }
     }
 }
-function Set-Option([string]$Key,[object]$Value) {
-    if ($PSBoundParameters.ContainsKey('Value') -and $null -ne $Value) {
-        $script:Config[$Key] = [string]$Value; $script:Sources[$Key] = 'CommandLine'
-    }
-}
 function Initialize-Settings {
+    # Load configuration in priority order and validate the effective values.
     $paths = @(
         (Join-Path $PSScriptRoot '.sbview.conf'),
         (Join-Path (Get-Location).Path '.sbview.conf'),
@@ -96,10 +94,10 @@ function Initialize-Settings {
     if ($ConfigPath) { $paths += $ConfigPath }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($path in $paths) {
-        $full = [IO.Path]::GetFullPath($path)
+        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
         if (-not $seen.Add($full)) { continue }
         if ([IO.File]::Exists($full)) { Read-SettingsFile $full }
-        elseif ($ConfigPath -and $full -eq [IO.Path]::GetFullPath($ConfigPath)) { throw "Config file not found: $full" }
+        elseif ($ConfigPath -and $full -eq $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigPath)) { throw "Config file not found: $full" }
     }
     $map = @{
         Include='INCLUDE'; DeviceId='DEVICE_ID'; Format='OUTPUT_FORMAT'; XmlMode='XML_MODE';
@@ -139,10 +137,18 @@ function Get-CacheFolder {
     return (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.cache/sbview')
 }
 function Get-CacheFile([string]$Endpoint) {
-    $sha = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($script:Config.TOKEN + ':' + $Endpoint))
-    return (Join-Path (Get-CacheFolder) ([Convert]::ToHexString($sha).ToLowerInvariant() + '.json'))
+    # Return the cache path for this account and API endpoint.
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $sha = $algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($script:Config.TOKEN + ':' + $Endpoint))
+        $name = [BitConverter]::ToString($sha).Replace('-', '').ToLowerInvariant()
+        return (Join-Path (Get-CacheFolder) "$name.json")
+    } finally {
+        $algorithm.Dispose()
+    }
 }
 function Invoke-SwitchBotGet([string]$Endpoint) {
+    # Retrieve an endpoint and return the successful API response.
     $cacheEnabled = $script:Config.USE_CACHE -eq 'true'
     if ($cacheEnabled) {
         $cacheFile = Get-CacheFile $Endpoint
@@ -156,11 +162,17 @@ function Invoke-SwitchBotGet([string]$Endpoint) {
     }
     $url = 'https://api.switch-bot.com' + $Endpoint
     for ($attempt=0; $attempt -le 3; $attempt++) {
+        $status = $null
         $nonce = [guid]::NewGuid().ToString('N')
         $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
         $bytes = [Text.Encoding]::UTF8.GetBytes($script:Config.TOKEN + $timestamp + $nonce)
         $key = [Text.Encoding]::UTF8.GetBytes($script:Config.SECRET)
-        $sign = [Convert]::ToBase64String([Security.Cryptography.HMACSHA256]::HashData($key,$bytes))
+        $algorithm = [Security.Cryptography.HMACSHA256]::new($key)
+        try {
+            $sign = [Convert]::ToBase64String($algorithm.ComputeHash($bytes))
+        } finally {
+            $algorithm.Dispose()
+        }
         $headers = @{ Authorization=$script:Config.TOKEN; sign=$sign; t=$timestamp; nonce=$nonce }
         try {
             $response = Invoke-RestMethod -Uri $url -Method Get -Headers $headers -TimeoutSec ([int]$script:Config.TIMEOUT_SEC) -ErrorAction Stop
@@ -177,7 +189,7 @@ function Invoke-SwitchBotGet([string]$Endpoint) {
             }
             return $response
         } catch {
-            if ($_.Exception.Message.StartsWith('AUTH:')) { throw }
+            if ($status -and $status -ne '100') { throw }
             $http = $null
             if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $http = [int]$_.Exception.Response.StatusCode }
             if ($http -in 401,403) { $script:HadAuthError = $true; throw "AUTH: HTTP $http" }
@@ -267,7 +279,8 @@ function Convert-ToCsvText($Rows) {
     return (($objects | ConvertTo-Csv -NoTypeInformation) -join [Environment]::NewLine)
 }
 function Save-Utf8([string]$Path,[string]$Content) {
-    $full = [IO.Path]::GetFullPath($Path)
+    # Save output as UTF-8, resolving relative paths from the PowerShell location.
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     $dir = [IO.Path]::GetDirectoryName($full)
     if ($dir) { [IO.Directory]::CreateDirectory($dir) | Out-Null }
     [IO.File]::WriteAllText($full,$Content,[Text.UTF8Encoding]::new($false))
@@ -275,7 +288,8 @@ function Save-Utf8([string]$Path,[string]$Content) {
 function Sort-Records($Items,[string]$NameField,[string]$IdField) {
     return @($Items | Sort-Object -Stable -Property @{Expression={ [string]$_[$NameField] }},@{Expression={ [string]$_[$IdField] }})
 }
-function Run-Exporter {
+function Run-Exporter([ref]$ExitCode) {
+    # Export selected data and set the exit code separately from standard output.
     $categories = @($script:Config.INCLUDE -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $ids = @($script:Config.DEVICE_ID -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $wantDevices = 'Devices' -in $categories; $wantStatus = 'Status' -in $categories; $wantScenes = 'Scenes' -in $categories
@@ -298,7 +312,6 @@ function Run-Exporter {
         $known = @($devices | ForEach-Object { [string]$_.deviceId })
         foreach ($id in $ids) { if ($id -cnotin $known) { $script:Errors.Add("Unknown device ID: $(Mask-Id $id)"); $failures++ } }
         $devices = @($devices | Where-Object { $_.deviceId -cin $ids })
-        if (-not $devices.Count) { throw 'NO_TARGET: None of the specified device IDs exist' }
     }
     if ($wantStatus) {
         foreach ($device in $devices) {
@@ -336,9 +349,10 @@ function Run-Exporter {
     if ($wantDevices) { $data['Devices'] = @($devices | ForEach-Object { Protect-Data $_ }) }
     if ($wantStatus) { $data['Status'] = @($statuses | ForEach-Object { Protect-Data $_ }) }
     if ($wantScenes) { $data['Scenes'] = @($scenes | ForEach-Object { Protect-Data $_ }) }
+    $script:FailureExitCode = 5
     $path = $script:Config.OUTPUT_PATH
     if ($script:Config.SAVE_RAW_JSON -eq 'true') {
-        $base = if ($path) { Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))) ([IO.Path]::GetFileNameWithoutExtension($path) + '_raw') } else { Join-Path (Get-Location).Path 'sbview_raw' }
+        $base = if ($path) { Join-Path ([IO.Path]::GetDirectoryName($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path))) ([IO.Path]::GetFileNameWithoutExtension($path) + '_raw') } else { Join-Path (Get-Location).Path 'sbview_raw' }
         foreach ($key in $raw.Keys) {
             $filename = ($key -replace '[^A-Za-z0-9_-]','_') + '.json'
             Save-Utf8 (Join-Path $base $filename) (ConvertTo-Json -InputObject $raw[$key] -Depth 100)
@@ -363,7 +377,7 @@ function Run-Exporter {
             foreach ($category in $csvSets.Keys) {
                 $content = Convert-ToCsvText $csvSets[$category]
                 if ($path) {
-                    $dir = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+                    $dir = [IO.Path]::GetDirectoryName($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path))
                     $prefix = [IO.Path]::GetFileNameWithoutExtension($path)
                     Save-Utf8 (Join-Path $dir "${prefix}_${category}.csv") $content
                 } else { Write-Output "# $category"; Write-Output $content }
@@ -371,25 +385,25 @@ function Run-Exporter {
         }
     }
     foreach ($errorMessage in $script:Errors) { Write-Diagnostic Warning $errorMessage }
-    if ($successes -eq 0 -and $failures -gt 0) { return 4 }
-    if ($failures -gt 0) { return 1 }
-    return 0
+    if ($successes -eq 0 -and $failures -gt 0) { $ExitCode.Value = 4; return }
+    if ($failures -gt 0) { $ExitCode.Value = 1; return }
+    $ExitCode.Value = 0
 }
 $script:CLIArgs = @{}; foreach ($name in $PSBoundParameters.Keys) { $script:CLIArgs[$name] = $PSBoundParameters[$name] }
 try {
     Initialize-Settings
     if ($ShowConfig) { Show-ResolvedConfig; exit 0 }
     Resolve-Credentials
+    $script:FailureExitCode = 4
     Write-Diagnostic Info 'sbview started'
-    $exitCode = Run-Exporter
+    Write-Diagnostic Debug "Run-Exporter: Include=$($script:Config.INCLUDE), Format=$($script:Config.OUTPUT_FORMAT), UseCache=$($script:Config.USE_CACHE)"
+    $exitCode = 0
+    Run-Exporter ([ref]$exitCode)
     Write-Diagnostic Info "sbview finished (exit $exitCode)"
     exit $exitCode
 } catch {
     $message = $_.Exception.Message
-    $exitCode = if ($message.StartsWith('AUTH:')) { 3 } elseif ($message.StartsWith('NO_TARGET:')) { 4 }
-        elseif ($message -match 'Missing SwitchBot Token|Config|configuration|Invalid |Unknown configuration') { 2 }
-        elseif ($message -match 'Access|path|directory|disk|write|XML|CSV') { 5 }
-        else { 4 }
+    $exitCode = if ($script:HadAuthError) { 3 } else { $script:FailureExitCode }
     [Console]::Error.WriteLine("[Error] $message")
     exit $exitCode
 }

@@ -23,6 +23,14 @@ SwitchBot のデバイス設定・状態情報を取得し、保存するため�
 
 これ以外の仕様についても、確定内容を確認でき次第、追記します。
 
+## 実装済みの機能
+
+PowerShell 7 で SwitchBot API の読み取り専用リクエストを実行し、XML（Structured または Raw）、Text、CSV に出力します。出力先を省略すると標準出力を使います。CSV をファイルに保存する場合は、指定パスのファイル名を接頭辞として、取得カテゴリとメタデータごとに CSV を作成します。
+
+`-Parallel` を指定すると警告を出して逐次取得します。`-SaveRawJson` で保存した JSON とキャッシュにはデバイス ID が含まれる場合があります。`-MaskDeviceId` を有効にした場合も、これらのファイルは非公開で管理してください。
+
+終了コードは 0（成功）、1（部分的失敗）、2（設定エラー）、3（API 認証エラー）、4（取得失敗）、5（出力エラー）です。設定確認には `-ShowConfig`、詳細ログには `-LogLevel Debug` を使えます。
+
 ## 設定テンプレート
 
 [.sbview.conf.sample](.sbview.conf.sample) は、`sbview.ps1` の設定項目に対応した、認証情報を含まないテンプレートです。`sbview.ps1` は `main` に公開済みです。
@@ -36,10 +44,7 @@ SwitchBot のデバイス設定・状態情報を取得し、保存するため�
 
 ## 実装・検証状況
 
-- 初期実装の `sbview.ps1` は `main` に反映済みです。
-- PowerShell 7 での構文確認と `-ShowConfig` の起動確認は完了しています。
-- SwitchBot API を使用した取得処理と各出力形式の検証は進行中です。
-- `PARALLEL` は設定として受け付けますが、現在の実装は警告を記録して逐次実行します。
+Windows の PowerShell 7.6.5 で構文を確認し、模擬 API 応答で取得、XML・Text・CSV 出力、キャッシュ、ログ、終了コードを検証しました。実際の SwitchBot API と Linux での動作は未検証です。
 
 ## 開発・更新方針
 
@@ -72,6 +77,14 @@ The following decisions have been confirmed from the available project context:
 
 Additional agreed specifications will be documented as they are verified.
 
+## Implemented features
+
+The script requires PowerShell 7, makes read-only requests to the SwitchBot API, and exports XML (Structured or Raw), Text, or CSV. Omit the output path to write to standard output. When writing CSV files, the script uses the specified filename stem as a prefix and creates files for each selected category and the metadata.
+
+Passing `-Parallel` emits a warning and uses sequential requests. Raw JSON saved by `-SaveRawJson` and cached responses can contain device IDs. Keep these files private even when `-MaskDeviceId` is enabled.
+
+Exit codes are 0 (success), 1 (partial failure), 2 (configuration error), 3 (API authentication error), 4 (retrieval failure), and 5 (output error). Use `-ShowConfig` to inspect settings or `-LogLevel Debug` for detailed logs.
+
 ## Configuration template
 
 [.sbview.conf.sample](.sbview.conf.sample) is a credential-free template matching the settings supported by `sbview.ps1`. The script has been published on `main`.
@@ -85,10 +98,7 @@ Never commit a `.sbview.conf` file containing an actual token or secret. Always 
 
 ## Implementation and validation status
 
-- The initial `sbview.ps1` implementation is available on `main`.
-- PowerShell 7 syntax validation and the `-ShowConfig` startup check have passed.
-- Validation of SwitchBot API retrieval and each output format is in progress.
-- `PARALLEL` is accepted as a setting, but the current implementation records a warning and runs requests sequentially.
+Syntax checks and tests with mock API responses passed on Windows with PowerShell 7.6.5. The tests covered retrieval, XML, Text, and CSV output, caching, logging, and exit codes. The live SwitchBot API and Linux have yet to be tested.
 
 ## Development and updates
 
